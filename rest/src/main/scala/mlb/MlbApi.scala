@@ -146,22 +146,10 @@ object DataService {
   import HomeTeams.*
   import AwayTeams.*
 
-  // val insertRows: ZIO[ZConnectionPool, Throwable, UpdateResult] = {
-  //   val rows: List[Game.Row] = games.map(_.toRow)
-  //   transaction {
-  //     insert(
-  //       sql"INSERT INTO games(date, season_year, playoff_round, home_team, away_team)"
-  //         .values[Game.Row](rows)
-  //     )
-  //   }
-  // }
-
-  // Should be implemented to replace the `val insertRows` example above. Replace `Any` by the proper case class.
   def insertRows(
       games: List[Game]
   ): ZIO[ZConnectionPool, Throwable, UpdateResult] = {
     val rows: List[Game.Row] = games.map(_.toRow)
-    println(rows)
     transaction {
       insert(
         sql"INSERT INTO games(date, season_year, playoff_round, home_team, away_team)"
