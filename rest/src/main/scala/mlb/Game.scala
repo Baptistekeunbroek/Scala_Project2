@@ -4,8 +4,6 @@ import zio.json._
 import zio.jdbc._
 
 import java.time.LocalDate
-import com.github.tototoshi.csv._
-import java.io.File
 
 object HomeTeams {
 
@@ -161,23 +159,3 @@ val games: List[Game] = List(
     AwayTeam("CHC")
   )
 )
-
-// object GameCsv {
-
-//   def readCsv(): List[Game] =
-//     CSVReader
-//       .open(new File("mlb_elo_latest.csv"))
-//       .allWithHeaders()
-//       .map { row =>
-//         Game(
-//           GameDate(LocalDate.parse(row("date"))),
-//           SeasonYear(row("season").toInt),
-//           None,
-//           HomeTeam(row("team1")),
-//           AwayTeam(row("team2"))
-//         )
-//       }
-
-// }
-
-// val games: List[Game] = GameCsv.readCsv()
