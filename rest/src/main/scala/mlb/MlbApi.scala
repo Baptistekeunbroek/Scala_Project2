@@ -19,6 +19,8 @@ import HomeScores.*
 import AwayScores.*
 import HomeElos.*
 import AwayElos.*
+import HomeProbElos.*
+import AwayProbElos.*
 
 object MlbApi extends ZIOAppDefault {
 
@@ -93,7 +95,9 @@ object MlbApi extends ZIOAppDefault {
             HomeScore(row(24).toIntOption.getOrElse(-1)),
             AwayScore(row(25).toIntOption.getOrElse(-1)),
             HomeElo(row(6).toDouble),
-            AwayElo(row(7).toDouble)
+            AwayElo(row(7).toDouble),
+            HomeProbElo(row(8).toDouble),
+            AwayProbElo(row(9).toDouble)
           )
         )
         .grouped(1000)
@@ -173,14 +177,25 @@ object ApiService {
     val draw: Int = game.count(g =>
       HomeScore.unapply(g.homeScore) == AwayScore.unapply(g.awayScore)
     )
+
     val homeWinRate: Double = homeWin.toDouble / game.size * 100
     val awayWinRate: Double = awayWin.toDouble / game.size * 100
     val drawRate: Double = draw.toDouble / game.size
+    val homeProbEloAvg: Double =
+      game.map(g => HomeProbElo.unapply(g.homeProbElo)).sum / game.size * 100
+    val awayProbEloAvg: Double =
+      game.map(g => AwayProbElo.unapply(g.awayProbElo)).sum / game.size * 100
+
     val homeWinRateStr: String = f"$homeWinRate%1.0f"
     val awayWinRateStr: String = f"$awayWinRate%1.0f"
     val drawRateStr: String = f"$drawRate%1.0f"
+    val homeProbStr: String = f"${homeProbEloAvg}%1.0f"
+    val awayProbStr: String = f"${awayProbEloAvg}%1.0f"
     val predictResponse: String =
-      s"Prediction for $homeTeam vs $awayTeam: $homeTeam wins $homeWinRateStr%, $awayTeam wins $awayWinRateStr%, draw $drawRateStr%. Based on ${game.size} games."
+      s"Prediction for $homeTeam vs $awayTeam:" +
+        s"\n$homeTeam wins $homeWinRateStr% of the time, $awayTeam wins $awayWinRateStr%, draw $drawRateStr%." +
+        s"\nBased on ${game.size} games." +
+        s"\nBased on elo, $homeTeam wins $homeProbStr% of the time, $awayTeam wins $awayProbStr%."
     Response.text(predictResponse).withStatus(Status.Ok)
   }
 }
@@ -204,7 +219,7 @@ object DataService {
 
   val create: ZIO[ZConnectionPool, Throwable, Unit] = transaction {
     execute(
-      sql"CREATE TABLE IF NOT EXISTS games(date DATE NOT NULL, season_year INT NOT NULL, home_team VARCHAR(3), away_team VARCHAR(3), home_score INT, away_score INT, home_elo DOUBLE, away_elo DOUBLE)"
+      sql"CREATE TABLE IF NOT EXISTS games(date DATE NOT NULL, season_year INT NOT NULL, home_team VARCHAR(3), away_team VARCHAR(3), home_score INT, away_score INT, home_elo DOUBLE, away_elo DOUBLE, home_prob_elo DOUBLE, away_prob_elo DOUBLE)"
     )
   }
 
@@ -214,7 +229,7 @@ object DataService {
     val rows: List[Game.Row] = games.map(_.toRow)
     transaction {
       insert(
-        sql"INSERT INTO games(date, season_year, home_team, away_team, home_score, away_score, home_elo, away_elo)"
+        sql"INSERT INTO games(date, season_year, home_team, away_team, home_score, away_score, home_elo, away_elo, home_prob_elo, away_prob_elo)"
           .values[Game.Row](rows)
       )
     }
