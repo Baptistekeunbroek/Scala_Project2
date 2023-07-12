@@ -162,8 +162,6 @@ object ApiService {
     val drawRateStr: String = f"$drawRate%1.0f"
     val predictResponse: String =
       s"Prediction for $homeTeam vs $awayTeam: $homeTeam wins $homeWinRateStr%, $awayTeam wins $awayWinRateStr%, draw $drawRateStr%. Based on ${game.size} games."
-    println(predictResponse)
-    println(game)
     Response.text(predictResponse).withStatus(Status.Ok)
   }
 }
