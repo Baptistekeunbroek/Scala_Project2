@@ -11,13 +11,21 @@ import zio.stream.ZStream
 import mlb.GameDates.GameDate
 import mlb.SeasonYears.SeasonYear
 import java.time.LocalDate
+import GameDates.*
+import SeasonYears.*
+import HomeTeams.*
+import AwayTeams.*
+import HomeScores.*
+import AwayScores.*
+import HomeElos.*
+import AwayElos.*
+import HomeProbElos.*
+import AwayProbElos.*
 
 object MlbApi extends ZIOAppDefault {
 
   import DataService._
   import ApiService._
-  import HomeTeams._
-  import AwayTeams._
 
   val static: App[Any] = Http
     .collect[Request] {
@@ -31,28 +39,38 @@ object MlbApi extends ZIOAppDefault {
     .collectZIO[Request] {
       case Method.GET -> Root / "init" =>
         ZIO.succeed(
-          Response.text("Not Implemented").withStatus(Status.NotImplemented)
+          Response
+            .text("Not Implemented, database is created at startup")
+            .withStatus(Status.NotImplemented)
         )
-      case Method.GET -> Root / "game" / "latest" / homeTeam / awayTeam =>
+      case Method.GET -> Root / "game" / "latests" / homeTeam / awayTeam =>
         for {
-          game: Option[Game] <- latest(HomeTeam(homeTeam), AwayTeam(awayTeam))
+          game: List[Game] <- latests(HomeTeam(homeTeam), AwayTeam(awayTeam))
           res: Response = latestGameResponse(game)
         } yield res
       case Method.GET -> Root / "game" / "predict" / homeTeam / awayTeam =>
-        // FIXME : implement correct logic and response
-        ZIO.succeed(
-          Response.text(s"$homeTeam vs $awayTeam win probability: 0.0")
-        )
+        for {
+          game: List[Game] <- predictMatch(
+            HomeTeam(homeTeam),
+            AwayTeam(awayTeam)
+          )
+          res: Response = predictMatchResponse(game, homeTeam, awayTeam)
+        } yield res
+      case Method.GET -> Root / "team" / "elo" / homeTeam =>
+        for {
+          team: Option[Game] <- latest(HomeTeam(homeTeam))
+          res: Response = eloTeamGameResponse(team, homeTeam)
+        } yield res
       case Method.GET -> Root / "games" / "count" =>
         for {
           count: Option[Int] <- count
           res: Response = countResponse(count)
         } yield res
-      case Method.GET -> Root / "games" / "history" / homeTeam =>
-        import zio.json.EncoderOps
-        import Game._
-        // FIXME: implement correct database request
-        ZIO.succeed(Response.json(games.toJson).withStatus(Status.Ok))
+      case Method.GET -> Root / "games" / "history" / team =>
+        for {
+          games: List[Game] <- findHistoryTeam(team)
+          res: Response = teamHistoryResponse(games)
+        } yield res
       case _ =>
         ZIO.succeed(Response.text("Not Found").withStatus(Status.NotFound))
     }
@@ -72,9 +90,14 @@ object MlbApi extends ZIOAppDefault {
           Game(
             GameDate(LocalDate.parse(row(0))),
             SeasonYear(row(1).toInt),
-            None,
             HomeTeam(row(4)),
-            AwayTeam(row(5))
+            AwayTeam(row(5)),
+            HomeScore(row(24).toIntOption.getOrElse(-1)),
+            AwayScore(row(25).toIntOption.getOrElse(-1)),
+            HomeElo(row(6).toDouble),
+            AwayElo(row(7).toDouble),
+            HomeProbElo(row(8).toDouble),
+            AwayProbElo(row(9).toDouble)
           )
         )
         .grouped(1000)
@@ -106,14 +129,74 @@ object ApiService {
         Response.text("No game in historical data").withStatus(Status.NotFound)
   }
 
-  def latestGameResponse(game: Option[Game]): Response = {
-    println(game)
-    game match
-      case Some(g) => Response.json(g.toJson).withStatus(Status.Ok)
+  def eloTeamGameResponse(game: Option[Game], homeTeam: String): Response = {
+    game match {
+      case Some(g) => {
+        val elo = f"${g.homeElo}%1.1f"
+        val res = s"$homeTeam elo is $elo"
+        Response.text(res).withStatus(Status.Ok)
+      }
       case None =>
         Response
           .text("No game found in historical data")
           .withStatus(Status.NotFound)
+    }
+  }
+
+  def latestGameResponse(game: List[Game]): Response = {
+    if (game.isEmpty) {
+      return Response
+        .text("No game found in historical data")
+        .withStatus(Status.NotFound)
+    }
+    Response.json(game.toJson).withStatus(Status.Ok)
+  }
+
+  def teamHistoryResponse(
+      games: List[Game]
+  ): Response = {
+    Response.json(games.toJson).withStatus(Status.Ok)
+  }
+
+  def predictMatchResponse(
+      game: List[Game],
+      homeTeam: String,
+      awayTeam: String
+  ): Response = {
+    if (game.isEmpty) {
+      return Response
+        .text("No game found in historical data")
+        .withStatus(Status.NotFound)
+    }
+    val homeWin: Int = game.count(g =>
+      HomeScore.unapply(g.homeScore) > AwayScore.unapply(g.awayScore)
+    )
+    val awayWin: Int = game.count(g =>
+      HomeScore.unapply(g.homeScore) < AwayScore.unapply(g.awayScore)
+    )
+    val draw: Int = game.count(g =>
+      HomeScore.unapply(g.homeScore) == AwayScore.unapply(g.awayScore)
+    )
+
+    val homeWinRate: Double = homeWin.toDouble / game.size * 100
+    val awayWinRate: Double = awayWin.toDouble / game.size * 100
+    val drawRate: Double = draw.toDouble / game.size
+    val homeProbEloAvg: Double =
+      game.map(g => HomeProbElo.unapply(g.homeProbElo)).sum / game.size * 100
+    val awayProbEloAvg: Double =
+      game.map(g => AwayProbElo.unapply(g.awayProbElo)).sum / game.size * 100
+
+    val homeWinRateStr: String = f"$homeWinRate%1.0f"
+    val awayWinRateStr: String = f"$awayWinRate%1.0f"
+    val drawRateStr: String = f"$drawRate%1.0f"
+    val homeProbStr: String = f"${homeProbEloAvg}%1.0f"
+    val awayProbStr: String = f"${awayProbEloAvg}%1.0f"
+    val predictResponse: String =
+      s"Prediction for $homeTeam vs $awayTeam:" +
+        s"\n$homeTeam wins $homeWinRateStr% of the time, $awayTeam wins $awayWinRateStr%, draw $drawRateStr%." +
+        s"\nBased on ${game.size} games." +
+        s"\nBased on elo, $homeTeam wins $homeProbStr% of the time, $awayTeam wins $awayProbStr%."
+    Response.text(predictResponse).withStatus(Status.Ok)
   }
 }
 
@@ -136,15 +219,9 @@ object DataService {
 
   val create: ZIO[ZConnectionPool, Throwable, Unit] = transaction {
     execute(
-      sql"CREATE TABLE IF NOT EXISTS games(date DATE NOT NULL, season_year INT NOT NULL, playoff_round INT, home_team VARCHAR(3), away_team VARCHAR(3))"
+      sql"CREATE TABLE IF NOT EXISTS games(date DATE NOT NULL, season_year INT NOT NULL, home_team VARCHAR(3), away_team VARCHAR(3), home_score INT, away_score INT, home_elo DOUBLE, away_elo DOUBLE, home_prob_elo DOUBLE, away_prob_elo DOUBLE)"
     )
   }
-
-  import GameDates.*
-  import PlayoffRounds.*
-  import SeasonYears.*
-  import HomeTeams.*
-  import AwayTeams.*
 
   def insertRows(
       games: List[Game]
@@ -152,7 +229,7 @@ object DataService {
     val rows: List[Game.Row] = games.map(_.toRow)
     transaction {
       insert(
-        sql"INSERT INTO games(date, season_year, playoff_round, home_team, away_team)"
+        sql"INSERT INTO games(date, season_year, home_team, away_team, home_score, away_score, home_elo, away_elo, home_prob_elo, away_prob_elo)"
           .values[Game.Row](rows)
       )
     }
@@ -164,16 +241,52 @@ object DataService {
     )
   }
 
-  def latest(
+  def latests(
       homeTeam: HomeTeam,
       awayTeam: AwayTeam
+  ): ZIO[ZConnectionPool, Throwable, List[Game]] = {
+    transaction {
+      selectAll(
+        sql"SELECT * FROM games WHERE home_team = ${HomeTeam
+            .unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)} ORDER BY date DESC LIMIT 10"
+          .as[Game]
+      ).map(_.toList)
+    }
+  }
+
+  def latest(
+      homeTeam: HomeTeam
   ): ZIO[ZConnectionPool, Throwable, Option[Game]] = {
     transaction {
       selectOne(
-        sql"SELECT date, season_year, playoff_round, home_team, away_team FROM games WHERE home_team = ${HomeTeam
-            .unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)} ORDER BY date DESC LIMIT 1"
+        sql"SELECT * FROM games WHERE home_team = ${HomeTeam
+            .unapply(homeTeam)} OR away_team = ${HomeTeam.unapply(homeTeam)} ORDER BY date DESC LIMIT 1"
           .as[Game]
       )
+    }
+  }
+
+  def predictMatch(
+      homeTeam: HomeTeam,
+      awayTeam: AwayTeam
+  ): ZIO[ZConnectionPool, Throwable, List[Game]] = {
+    transaction {
+      selectAll(
+        sql"SELECT * FROM games WHERE home_team = ${HomeTeam
+            .unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)} AND home_score != -1 AND away_score != -1"
+          .as[Game]
+      ).map(_.toList)
+    }
+  }
+
+  def findHistoryTeam(
+      homeTeam: String
+  ): ZIO[ZConnectionPool, Throwable, List[Game]] = {
+    transaction {
+      selectAll(
+        sql"SELECT * FROM games WHERE home_team = ${homeTeam}"
+          .as[Game]
+      ).map(_.toList)
     }
   }
 }
