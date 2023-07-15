@@ -32,6 +32,7 @@ lazy val rest = project
       "dev.zio" %% "zio-jdbc" % zioJdbcVersion,
       "dev.zio" %% "zio-json" % zioJsonVersion,
       "dev.zio" %% "zio-http" % zioHtppVersion,
+      "dev.zio" %% "zio-test-sbt" % zioVersion % "test",
       "com.github.tototoshi" %% "scala-csv" % scalaCsvVersion
     )
   )
