@@ -2,24 +2,26 @@ package mlb
 
 import zio.json._
 import zio.jdbc._
-
 import java.time.LocalDate
 
+// Declaring objects that will be used in Game class
 object HomeTeams {
-
+  // opaque type is a type alias that is only visible to the compiler
   opaque type HomeTeam = String
-
+  // Creating HomeTeam object
   object HomeTeam {
-
+    // apply method is used to create a HomeTeam object
     def apply(value: String): HomeTeam = value
-
+    // unapply method is used to extract a HomeTeam object
     def unapply(homeTeam: HomeTeam): String = homeTeam
   }
 
   given CanEqual[HomeTeam, HomeTeam] = CanEqual.derived
+  // Creating a JsonEncoder for HomeTeam, which is a String and will be used to encode HomeTeam to Json
   implicit val homeTeamEncoder: JsonEncoder[HomeTeam] = JsonEncoder.string
   implicit val homeTeamDecoder: JsonDecoder[HomeTeam] = JsonDecoder.string
 }
+// The method above is repeated for the rest of the objects
 
 object AwayTeams {
 
@@ -179,6 +181,7 @@ import AwayElos.*
 import HomeProbElos.*
 import AwayProbElos.*
 
+// Creating Game class
 final case class Game(
     date: GameDate,
     season: SeasonYear,

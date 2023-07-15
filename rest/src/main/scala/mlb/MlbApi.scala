@@ -1,16 +1,12 @@
 package mlb
 
+// Imports
 import zio._
 import zio.jdbc._
 import zio.http._
-
-import java.sql.Date
 import com.github.tototoshi.csv._
 import java.io.File
 import zio.stream.ZStream
-import mlb.GameDates.GameDate
-import mlb.SeasonYears.SeasonYear
-import java.time.LocalDate
 import GameDates.*
 import SeasonYears.*
 import HomeTeams.*
@@ -21,12 +17,14 @@ import HomeElos.*
 import AwayElos.*
 import HomeProbElos.*
 import AwayProbElos.*
+import java.time.LocalDate
 
 object MlbApi extends ZIOAppDefault {
 
   import DataService._
   import ApiService._
 
+  // Static endpoints, for testing purpose
   val static: App[Any] = Http
     .collect[Request] {
       case Method.GET -> Root / "text" => Response.text("Hello MLB Fans!")
@@ -37,17 +35,20 @@ object MlbApi extends ZIOAppDefault {
 
   val endpoints: App[ZConnectionPool] = Http
     .collectZIO[Request] {
+      // Init the database
       case Method.GET -> Root / "init" =>
         ZIO.succeed(
           Response
             .text("Not Implemented, database is created at startup")
             .withStatus(Status.NotImplemented)
         )
+      // Get the latest 20 games between two teams
       case Method.GET -> Root / "game" / "latests" / homeTeam / awayTeam =>
         for {
           game: List[Game] <- latests(HomeTeam(homeTeam), AwayTeam(awayTeam))
           res: Response = latestGameResponse(game)
         } yield res
+      //  Predict a match between two teams
       case Method.GET -> Root / "game" / "predict" / homeTeam / awayTeam =>
         for {
           game: List[Game] <- predictMatch(
@@ -56,16 +57,19 @@ object MlbApi extends ZIOAppDefault {
           )
           res: Response = predictMatchResponse(game, homeTeam, awayTeam)
         } yield res
+      // Get the elo of a team
       case Method.GET -> Root / "team" / "elo" / homeTeam =>
         for {
           team: Option[Game] <- latest(HomeTeam(homeTeam))
           res: Response = eloTeamGameResponse(team, homeTeam)
         } yield res
+      // Get count of all games in history
       case Method.GET -> Root / "games" / "count" =>
         for {
           count: Option[Int] <- count
           res: Response = countResponse(count)
         } yield res
+      // Get all games for a team in history
       case Method.GET -> Root / "games" / "history" / team =>
         for {
           games: List[Game] <- findHistoryTeam(team)
@@ -76,17 +80,22 @@ object MlbApi extends ZIOAppDefault {
     }
     .withDefaultErrorResponse
 
+  // Init the database and start the server
   val appLogic: ZIO[ZConnectionPool & Server, Throwable, Unit] = for {
     _ <- for {
       conn <- create
       source <- ZIO.succeed(
+        // Read the csv file, change to mlb_elo.csv for full data
         CSVReader
+          // .open(new File("mlb_elo.csv"))
           .open(new File("mlb_elo_latest.csv"))
       )
       stream <- ZStream
         .fromIterator[Seq[String]](source.iterator)
+        // Skip the first row and empty rows
         .filter(row => row.nonEmpty && row(0) != "date")
         .map[Game](row =>
+          // Create a game from a row
           Game(
             GameDate(LocalDate.parse(row(0))),
             SeasonYear(row(1).toInt),
@@ -101,6 +110,7 @@ object MlbApi extends ZIOAppDefault {
           )
         )
         .grouped(1000)
+        // Insert 1000 rows at a time to the database
         .foreach(chunk => insertRows(chunk.toList))
       _ <- ZIO.succeed(source.close())
       res <- ZIO.succeed(conn)
@@ -108,18 +118,19 @@ object MlbApi extends ZIOAppDefault {
     _ <- Server.serve[ZConnectionPool](static ++ endpoints)
   } yield ()
 
+  // Start the server, equivalent to main method
   override def run: ZIO[Any, Throwable, Unit] =
     appLogic
       .provide(
         createZIOPoolConfig >>> connectionPool,
+        // Change the port here if needed (default is 8080, mine was already in use)
         Server.defaultWithPort(5000)
       )
 }
 
+// object used for the response of the api
 object ApiService {
-
   import zio.json.EncoderOps
-  import Game._
 
   def countResponse(count: Option[Int]): Response = {
     count match
@@ -168,40 +179,43 @@ object ApiService {
         .text("No game found in historical data")
         .withStatus(Status.NotFound)
     }
+    // The prediction is based on the last 20 games between the two teams
+    // Count the number of win for each team
     val homeWin: Int = game.count(g =>
       HomeScore.unapply(g.homeScore) > AwayScore.unapply(g.awayScore)
     )
     val awayWin: Int = game.count(g =>
       HomeScore.unapply(g.homeScore) < AwayScore.unapply(g.awayScore)
     )
-    val draw: Int = game.count(g =>
-      HomeScore.unapply(g.homeScore) == AwayScore.unapply(g.awayScore)
-    )
 
+    // Calculate the win rate for each team
     val homeWinRate: Double = homeWin.toDouble / game.size * 100
     val awayWinRate: Double = awayWin.toDouble / game.size * 100
-    val drawRate: Double = draw.toDouble / game.size
+
+    // Calculate the average elo for each team
     val homeProbEloAvg: Double =
       game.map(g => HomeProbElo.unapply(g.homeProbElo)).sum / game.size * 100
     val awayProbEloAvg: Double =
       game.map(g => AwayProbElo.unapply(g.awayProbElo)).sum / game.size * 100
 
+    // Format the response
     val homeWinRateStr: String = f"$homeWinRate%1.0f"
     val awayWinRateStr: String = f"$awayWinRate%1.0f"
-    val drawRateStr: String = f"$drawRate%1.0f"
     val homeProbStr: String = f"${homeProbEloAvg}%1.0f"
     val awayProbStr: String = f"${awayProbEloAvg}%1.0f"
     val predictResponse: String =
       s"Prediction for $homeTeam vs $awayTeam:" +
-        s"\n$homeTeam wins $homeWinRateStr% of the time, $awayTeam wins $awayWinRateStr%, draw $drawRateStr%." +
-        s"\nBased on ${game.size} games." +
+        s"\n$homeTeam wins $homeWinRateStr% of the time, $awayTeam wins $awayWinRateStr%." +
+        s"\nBased on ${game.size} latest games." +
         s"\nBased on elo, $homeTeam wins $homeProbStr% of the time, $awayTeam wins $awayProbStr%."
     Response.text(predictResponse).withStatus(Status.Ok)
   }
 }
 
+// object used for the database
 object DataService {
 
+  // Create the database
   val createZIOPoolConfig: ULayer[ZConnectionPoolConfig] =
     ZLayer.succeed(ZConnectionPoolConfig.default)
 
@@ -222,7 +236,7 @@ object DataService {
       sql"CREATE TABLE IF NOT EXISTS games(date DATE NOT NULL, season_year INT NOT NULL, home_team VARCHAR(3), away_team VARCHAR(3), home_score INT, away_score INT, home_elo DOUBLE, away_elo DOUBLE, home_prob_elo DOUBLE, away_prob_elo DOUBLE)"
     )
   }
-
+  // Insert a list of games in the database
   def insertRows(
       games: List[Game]
   ): ZIO[ZConnectionPool, Throwable, UpdateResult] = {
@@ -234,6 +248,8 @@ object DataService {
       )
     }
   }
+
+  // After are the different queries used in the api
 
   val count: ZIO[ZConnectionPool, Throwable, Option[Int]] = transaction {
     selectOne(
@@ -248,7 +264,7 @@ object DataService {
     transaction {
       selectAll(
         sql"SELECT * FROM games WHERE home_team = ${HomeTeam
-            .unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)} ORDER BY date DESC LIMIT 10"
+            .unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)} ORDER BY date DESC LIMIT 20"
           .as[Game]
       ).map(_.toList)
     }
@@ -273,7 +289,7 @@ object DataService {
     transaction {
       selectAll(
         sql"SELECT * FROM games WHERE home_team = ${HomeTeam
-            .unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)} AND home_score != -1 AND away_score != -1"
+            .unapply(homeTeam)} AND away_team = ${AwayTeam.unapply(awayTeam)} AND home_score != -1 AND away_score != -1 order by date desc limit 20"
           .as[Game]
       ).map(_.toList)
     }
